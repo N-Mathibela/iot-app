@@ -2,7 +2,7 @@ import { View, Text, Image, TouchableOpacity } from 'react-native'
 import React from 'react'
 import { useRouter } from 'expo-router'
 
-const StudentCard = ({ student = { id: '1', name: 'Sabelo', email: 'sabelo@gmail.com' } }) => {
+const StudentCard = ({ student = { id: 1, name: 'Sabelo', email: 'sabelo@gmail.com' } }) => {
   const router = useRouter()
 
   const handlePress = () => {
