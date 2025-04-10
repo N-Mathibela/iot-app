@@ -13,14 +13,14 @@ interface Learner {
   classId?: number;
 }
 
+// Interface for MongoDB data structure - matching the student detail page
 interface SensorData {
-  id: number;
-  sensorId: string;
-  timestamp: string;
-  value: number;
-  unit: string;
-  type: string;
-  deviceId: string;
+  _id?: string;
+  id?: string; // Alternative ID field
+  timestamp?: Date | string;
+  heartRate?: number;
+  noiseLevel?: number;
+  movementDetected?: boolean;
 }
 
 export default function Index() {
@@ -62,20 +62,67 @@ export default function Index() {
       try {
         setLoading(prev => ({ ...prev, concentration: true }));
         const response = await sensorDataApi.getAll();
-        const allSensorData = response.data;
+        let allSensorData = response.data || [];
         
-        // Filter for concentration data
-        const concentrationData = allSensorData.filter(
-          (sensor: SensorData) => sensor.type === 'concentration'
-        );
+        console.log('Sensor data from API:', allSensorData);
         
-        if (concentrationData.length > 0) {
-          // Calculate average concentration
-          const sum = concentrationData.reduce(
-            (acc: number, sensor: SensorData) => acc + sensor.value, 0
-          );
-          const average = Math.round(sum / concentrationData.length);
-          setAverageConcentration(average);
+        if (allSensorData.length > 0) {
+          // Sort by timestamp to get the latest readings first
+          allSensorData = sortSensorDataByTimestamp(allSensorData);
+          
+          // Calculate concentration for each student based on their latest reading
+          const concentrationValues = allSensorData.map(d => {
+            // Get values with fallbacks
+            const heartRate = typeof d.heartRate === 'number' ? d.heartRate : 75;
+            const noiseLevel = typeof d.noiseLevel === 'number' ? d.noiseLevel : 42;
+            const movementDetected = !!d.movementDetected;
+            
+            // Calculate concentration score based on multiple factors
+            // Heart rate factor: optimal concentration at 70-80 bpm
+            let heartRateFactor;
+            if (heartRate > 90) {
+              // Sharper decline for high heart rates
+              heartRateFactor = Math.max(0, 100 - (heartRate - 90) * 5);
+            } else if (heartRate < 60) {
+              // Low heart rate also reduces concentration (drowsiness)
+              heartRateFactor = Math.max(0, 100 - (60 - heartRate) * 3);
+            } else {
+              // Optimal range 70-80
+              heartRateFactor = Math.max(0, 100 - Math.abs(heartRate - 75) * 2);
+            }
+            
+            // Noise factor: higher noise reduces concentration more aggressively
+            // Above 60dB is considered disruptive
+            const noiseFactor = noiseLevel > 60 
+              ? Math.max(0, 100 - (noiseLevel - 60) * 3) // Sharper decline for high noise
+              : Math.max(0, 100 - noiseLevel);
+            
+            // Movement factor: movement indicates distraction
+            const movementFactor = movementDetected ? 40 : 100; // More significant penalty for movement
+            
+            // Weighted average of all factors
+            let concentration = (
+              (heartRateFactor * 0.4) + 
+              (noiseFactor * 0.3) + 
+              (movementFactor * 0.3)
+            );
+            
+            // Apply a multiplier penalty when all factors are bad
+            if (heartRate > 85 && noiseLevel > 55 && movementDetected) {
+              // Additional penalty when all factors are negative
+              concentration *= 0.7; // 30% additional reduction
+            }
+            
+            return Math.min(100, Math.max(0, Math.round(concentration)));
+          });
+          
+          // Calculate average concentration across all students
+          if (concentrationValues.length > 0) {
+            const sum = concentrationValues.reduce((acc, val) => acc + val, 0);
+            const average = Math.round(sum / concentrationValues.length);
+            setAverageConcentration(average);
+            console.log('Average concentration:', average);
+          }
         }
         
         setError(prev => ({ ...prev, concentration: '' }));
@@ -90,8 +137,26 @@ export default function Index() {
 
     fetchConcentrationData();
     
-    // Poll for concentration updates every minute
-    const interval = setInterval(fetchConcentrationData, 60000);
+    // Helper function to sort sensor data by timestamp (newest first)
+    function sortSensorDataByTimestamp(data: SensorData[]): SensorData[] {
+      return [...data].sort((a, b) => {
+        const getTime = (item: any) => {
+          if (item.timestamp) {
+            return typeof item.timestamp === 'string' 
+              ? new Date(item.timestamp).getTime() 
+              : item.timestamp instanceof Date 
+                ? item.timestamp.getTime() 
+                : 0;
+          }
+          return 0;
+        };
+        
+        return getTime(b) - getTime(a); // Newest first
+      });
+    }
+    
+    // Poll for concentration updates every 30 seconds
+    const interval = setInterval(fetchConcentrationData, 30000);
     return () => clearInterval(interval);
   }, []);
 

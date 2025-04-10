@@ -1,11 +1,11 @@
 import { View, Text, ScrollView, Dimensions, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native'
 import React, { useState, useEffect } from 'react'
-import { useLocalSearchParams } from 'expo-router'
+import { useLocalSearchParams, router } from 'expo-router'
 import { LineChart } from 'react-native-chart-kit'
 import { Ionicons } from '@expo/vector-icons'
 import StatCard from '../components/StatCard'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { sensorDataApi, learnerApi, alertApi } from '../services/api'
+import { sensorDataApi, learnerApi, alertApi, feedbackApi } from '../services/api'
 
 // Define interfaces for our data types
 interface Learner {
@@ -24,6 +24,15 @@ interface SensorData {
   heartRate?: number;
   noiseLevel?: number;
   movementDetected?: boolean;
+}
+
+// Interface for Feedback model
+interface Feedback {
+  id?: string;
+  learnerId: number;
+  title?: string;
+  message?: string;
+  timestamp?: Date | string;
 }
 
 interface Alert {
@@ -65,6 +74,17 @@ const StudentDetails = () => {
   
   // Force re-render when data changes
   const [refreshKey, setRefreshKey] = useState(0);
+  
+  // State for alert thresholds
+  const [alertThresholds, setAlertThresholds] = useState({
+    heartRateHigh: 90, // Heart rate above this is concerning
+    heartRateLow: 55,  // Heart rate below this is concerning
+    noiseLevel: 80,    // Noise level above this is concerning
+    movementDuration: 60000 // Movement detected for this many ms is concerning (60 seconds)
+  });
+  
+  // State to track how long movement has been detected
+  const [movementStartTime, setMovementStartTime] = useState<number | null>(null);
   const [concentrationData, setConcentrationData] = useState({
     labels: ['9:00', '9:10', '9:20', '9:30', '9:40', '9:50'],
     datasets: [
@@ -242,19 +262,49 @@ const StudentDetails = () => {
           // Get heart rate with fallback - use camelCase property names
           const heartRate = typeof latestReading.heartRate === 'number' ? latestReading.heartRate : 75;
           
+          // Get noise level with fallback - use camelCase property name
+          const noiseLevel = typeof latestReading.noiseLevel === 'number' ? latestReading.noiseLevel : 42;
+          
           // Get movement detection - use camelCase property name
           const movementDetected = !!latestReading.movementDetected;
           
           console.log(`Updating heart rate to ${heartRate}, movement to ${movementDetected}`);
+          
+          // Track movement duration for alerts
+          if (movementDetected && movementStartTime === null) {
+            // Movement just started
+            setMovementStartTime(Date.now());
+          } else if (!movementDetected && movementStartTime !== null) {
+            // Movement just stopped
+            setMovementStartTime(null);
+          }
           
           setPhysiologicalData({
             heartRate: heartRate,
             movementDetected: movementDetected
           });
           
-          // Get noise level with fallback - use camelCase property name
-          const noiseLevel = typeof latestReading.noiseLevel === 'number' ? latestReading.noiseLevel : 42;
+          // Check for alert conditions
+          checkAndCreateAlerts({
+            heartRate,
+            noiseLevel: typeof latestReading.noiseLevel === 'number' ? latestReading.noiseLevel : 42,
+            movementDetected,
+            timestamp: latestReading.timestamp
+          });
           
+          // IMPORTANT: Create a direct feedback entry for testing
+          // This ensures data is sent to your database regardless of alert conditions
+          const learnerId = Number(id);
+          const studentName = selectedStudent?.name || `Student ${id}`;
+          
+          // Create a test feedback entry that will show up in your database
+          createFeedback({
+            learnerId: learnerId,
+            title: 'Sensor Update',
+            message: `${studentName}'s latest reading: HR=${heartRate}bpm, Noise=${noiseLevel}dB, Movement=${movementDetected ? 'Yes' : 'No'}`
+          });
+          
+          // Already defined noiseLevel above
           console.log(`Updating noise level to ${noiseLevel}`);
           
           // Ensure we're setting a numeric value for the noise level
@@ -363,7 +413,21 @@ const StudentDetails = () => {
       fetchSensorData();
       
       // Set up polling for live updates - more frequent for real-time display
-      const interval = setInterval(fetchSensorData, 5000); // Poll every 5 seconds for more frequent updates
+      const interval = setInterval(() => {
+        fetchSensorData();
+        
+        // Check for prolonged movement
+        if (movementStartTime !== null) {
+          const movementDuration = Date.now() - movementStartTime;
+          if (movementDuration > alertThresholds.movementDuration) {
+            // Create alert for prolonged movement
+            createMovementAlert(movementDuration);
+            // Reset the timer to avoid creating multiple alerts
+            setMovementStartTime(Date.now());
+          }
+        }
+      }, 5000); // Poll every 5 seconds for more frequent updates
+      
       return () => clearInterval(interval);
     }
   }, [selectedStudent]);
@@ -377,11 +441,10 @@ const StudentDetails = () => {
         const response = await alertApi.getAll();
         const allAlerts = response.data || [];
         
-        // If we have no alerts, create demo alerts
+        // If we have no alerts, just show empty state
         if (allAlerts.length === 0) {
-          console.log('No alerts available, using demo alerts');
-          const demoAlerts = generateDemoAlerts(selectedStudent?.deviceId || `device-${id}`);
-          setStudentAlerts(demoAlerts);
+          console.log('No alerts available');
+          setStudentAlerts([]);
         } else {
           // Filter alerts by the student's deviceId if available
           if (selectedStudent?.deviceId) {
@@ -392,12 +455,12 @@ const StudentDetails = () => {
             if (filteredAlerts.length > 0) {
               setStudentAlerts(filteredAlerts);
             } else {
-              // No alerts for this student, use demo alerts
-              const demoAlerts = generateDemoAlerts(selectedStudent.deviceId);
-              setStudentAlerts(demoAlerts);
+              // No alerts for this student
+              console.log('No alerts for this student');
+              setStudentAlerts([]);
             }
           } else {
-            // For demo purposes, use all alerts
+            // Use all alerts if no device ID is available
             setStudentAlerts(allAlerts);
           }
         }
@@ -407,50 +470,213 @@ const StudentDetails = () => {
         console.error('Error fetching alerts:', err);
         setError(prev => ({ ...prev, alerts: 'Failed to load alerts' }));
         
-        // Generate demo alerts on error
-        const demoAlerts = generateDemoAlerts(selectedStudent?.deviceId || `device-${id}`);
-        setStudentAlerts(demoAlerts);
+        // Don't use demo alerts on error
+        setStudentAlerts([]);
       } finally {
         setLoading(prev => ({ ...prev, alerts: false }));
       }
     };
     
-    // Helper function to generate demo alerts
-    const generateDemoAlerts = (deviceId: string): Alert[] => {
-      const now = new Date();
-      const alertTypes = ['alert', 'warning', 'info'];
-      const alertMessages = [
-        'Focus dropped below 50%',
-        'High noise level detected',
-        'Poor posture detected',
-        'Device battery low',
-        'Concentration improving'
-      ];
-      
-      const demoAlerts: Alert[] = [];
-      
-      // Generate a few alerts
-      for (let i = 0; i < 4; i++) {
-        const timestamp = new Date(now);
-        timestamp.setHours(now.getHours() - Math.floor(i * 2));
-        
-        demoAlerts.push({
-          id: i + 1,
-          timestamp: timestamp.toISOString(),
-          message: alertMessages[i % alertMessages.length],
-          type: alertTypes[i % alertTypes.length],
-          deviceId,
-          isRead: i > 1 // First two are unread
-        });
-      }
-      
-      return demoAlerts;
-    };
+    // No demo alerts - we only use real data from the API
 
     if (selectedStudent) {
       fetchAlerts();
     }
   }, [selectedStudent]);
+
+  // Function to check sensor data and create alerts if needed
+  // This function will also create feedback entries for the database
+  const checkAndCreateAlerts = async (data: {
+    heartRate: number;
+    noiseLevel: number;
+    movementDetected: boolean;
+    timestamp?: Date | string; // Make timestamp optional to fix type error
+  }) => {
+    try {
+      const { heartRate, noiseLevel, movementDetected } = data;
+      const studentName = selectedStudent?.name || `Student ${id}`;
+      const learnerId = Number(id);
+      
+      // Check heart rate (high)
+      if (heartRate > alertThresholds.heartRateHigh) {
+        await createAlert({
+          learnerId,
+          title: 'High Heart Rate Detected',
+          message: `${studentName}'s heart rate is ${heartRate} bpm, which is above the threshold of ${alertThresholds.heartRateHigh} bpm.`,
+          type: 'warning'
+        });
+        
+        // Also create feedback
+        await createFeedback({
+          learnerId,
+          title: 'High Heart Rate',
+          message: `The student may be experiencing stress or anxiety. Consider checking in with them.`
+        });
+      }
+      
+      // Check heart rate (low)
+      if (heartRate < alertThresholds.heartRateLow && heartRate > 0) { // Ignore zero readings
+        await createAlert({
+          learnerId,
+          title: 'Low Heart Rate Detected',
+          message: `${studentName}'s heart rate is ${heartRate} bpm, which is below the threshold of ${alertThresholds.heartRateLow} bpm.`,
+          type: 'warning'
+        });
+        
+        // Also create feedback
+        await createFeedback({
+          learnerId,
+          title: 'Low Heart Rate',
+          message: `The student may be tired or disengaged. Consider a short break or change of activity.`
+        });
+      }
+      
+      // Check noise level
+      if (noiseLevel > alertThresholds.noiseLevel) {
+        await createAlert({
+          learnerId,
+          title: 'High Noise Level Detected',
+          message: `The noise level around ${studentName} is ${noiseLevel} dB, which is above the threshold of ${alertThresholds.noiseLevel} dB.`,
+          type: 'alert'
+        });
+        
+        // Also create feedback
+        await createFeedback({
+          learnerId,
+          title: 'Noisy Environment',
+          message: `The learning environment is too noisy. This may be affecting concentration.`
+        });
+      }
+      
+    } catch (error) {
+      console.error('Error creating alerts:', error);
+    }
+  };
+  
+  // Function to create an alert for prolonged movement
+  const createMovementAlert = async (duration: number) => {
+    try {
+      const studentName = selectedStudent?.name || `Student ${id}`;
+      const learnerId = Number(id);
+      const durationInSeconds = Math.floor(duration / 1000);
+      
+      await createAlert({
+        learnerId,
+        title: 'Prolonged Movement Detected',
+        message: `${studentName} has been moving for ${durationInSeconds} seconds, which may indicate distraction.`,
+        type: 'info'
+      });
+      
+      // Also create feedback
+      await createFeedback({
+        learnerId,
+        title: 'Excessive Movement',
+        message: `The student has been moving frequently. They may be restless or having difficulty focusing.`
+      });
+      
+    } catch (error) {
+      console.error('Error creating movement alert:', error);
+    }
+  };
+  
+  // Function to create an alert
+  const createAlert = async (alertData: {
+    learnerId: number;
+    title: string;
+    message: string;
+    type: 'info' | 'warning' | 'alert';
+  }) => {
+    try {
+      // Always create alerts and feedback - removed randomization
+      // This ensures data is sent to the database
+      const shouldCreateAlert = true; // Always create alerts
+      
+      if (shouldCreateAlert) {
+        console.log('Creating alert:', alertData);
+        
+        // Format the alert to match the expected structure in the notifications page
+        // Make sure all fields match exactly what the notifications page expects
+        const alertToCreate = {
+          id: Date.now(), // Provide an ID that can be used if the server doesn't generate one
+          learnerId: alertData.learnerId,
+          title: alertData.title,
+          message: alertData.message,
+          timestamp: new Date().toISOString(),
+          type: alertData.type,
+          isRead: false,
+          deviceId: selectedStudent?.deviceId || `device-${id}`
+        };
+        
+        // Create the alert via API
+        const response = await alertApi.create(alertToCreate);
+        
+        console.log('Alert created:', response);
+        
+        // IMPORTANT: Always create feedback for each alert
+        // This ensures the data appears in your Feedback database
+        await createFeedback({
+          learnerId: alertData.learnerId,
+          title: alertData.title,
+          message: alertData.message
+        });
+        
+        // Add to local alerts immediately for a responsive UI
+        const newAlert: Alert = {
+          id: typeof response.data?.id === 'number' ? response.data.id : Date.now(), // Fallback to timestamp if no ID
+          timestamp: alertToCreate.timestamp,
+          message: alertToCreate.message,
+          type: alertToCreate.type,
+          deviceId: alertToCreate.deviceId,
+          isRead: false
+        };
+        
+        // Update local alerts state
+        setStudentAlerts(prev => [newAlert, ...prev]);
+        
+        // Show a notification to the user
+        console.log(`NOTIFICATION: ${alertData.title} - ${alertData.message}`);
+      }
+    } catch (error) {
+      console.error('Error creating alert:', error);
+    }
+  };
+  
+  // Function to create feedback
+  const createFeedback = async (feedbackData: {
+    learnerId: number;
+    title?: string;
+    message: string;
+  }) => {
+    try {
+      // Always create feedback - removed randomization
+      // This ensures data is sent to your database
+      const shouldCreateFeedback = true; // Always create feedback
+      
+      if (shouldCreateFeedback) {
+        console.log('Creating feedback:', feedbackData);
+        
+        // Create the feedback via API with all required fields
+        // IMPORTANT: Include the Comments field required by the .NET API
+        const feedbackToCreate = {
+          LearnerId: feedbackData.learnerId, // Capitalized to match .NET model
+          Title: feedbackData.title || 'Automatic Feedback', // Capitalized
+          Message: feedbackData.message, // Capitalized
+          Timestamp: new Date().toISOString(), // Capitalized
+          Comments: feedbackData.message // Required field based on error message
+        };
+        
+        // Log the exact data being sent to the API
+        console.log('Sending feedback data to API:', JSON.stringify(feedbackToCreate));
+        
+        // Create the feedback via API
+        const response = await feedbackApi.create(feedbackToCreate);
+        
+        console.log('Feedback created response:', JSON.stringify(response));
+      }
+    } catch (error) {
+      console.error('Error creating feedback:', error);
+    }
+  };
 
   const renderAlertItem = ({ item }: { item: Alert }) => (
     <View className="border-b border-gray-200 py-2">

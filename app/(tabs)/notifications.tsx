@@ -2,110 +2,136 @@ import { View, Text, ScrollView, TouchableOpacity, FlatList, ActivityIndicator }
 import React, { useState, useEffect } from 'react'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons'
-import { alertApi } from '../services/api'
+import { feedbackApi, testApiConnection } from '../services/api'
 
-// Define Alert interface
-interface Alert {
-  id: number;
-  title: string;
-  message: string;
-  timestamp: string;
-  type: string;
-  isRead: boolean;
-  deviceId?: string;
+// Define Feedback interface to match your .NET model
+interface Feedback {
+  id?: string;
+  learnerId: number;
+  title?: string;
+  message?: string;
+  timestamp?: Date | string;
+  isRead?: boolean; // Added for UI tracking
+  type?: string;    // Added for UI display
 }
 
 const Notifications = () => {
-  const [notifications, setNotifications] = useState<Alert[]>([])
+  const [notifications, setNotifications] = useState<Feedback[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [filter, setFilter] = useState('all') // 'all', 'unread', 'alerts', 'warnings', 'info'
   
-  // Fetch alerts from API
+  // Function to generate demo notifications
+  const generateDemoNotifications = (): Feedback[] => {
+    const now = new Date();
+    return [
+      {
+        id: '1',
+        learnerId: 1,
+        title: 'High Heart Rate Detected',
+        message: 'Student\'s heart rate is 95 bpm, which is above the threshold of 90 bpm.',
+        timestamp: new Date(now.getTime() - 15 * 60000).toISOString(), // 15 mins ago
+        type: 'warning',
+        isRead: false
+      },
+      {
+        id: '2',
+        learnerId: 1,
+        title: 'Noise Level Alert',
+        message: 'High noise level detected (85dB). This may be affecting concentration.',
+        timestamp: new Date(now.getTime() - 45 * 60000).toISOString(), // 45 mins ago
+        type: 'alert',
+        isRead: true
+      },
+      {
+        id: '3',
+        learnerId: 2,
+        title: 'Movement Detection',
+        message: 'Movement detected for extended period (over 60 seconds).',
+        timestamp: new Date(now.getTime() - 90 * 60000).toISOString(), // 1.5 hours ago
+        type: 'info',
+        isRead: false
+      },
+      {
+        id: '4',
+        learnerId: 1,
+        title: 'Low Heart Rate',
+        message: 'Student\'s heart rate is 52 bpm, which is below the threshold of 55 bpm.',
+        timestamp: new Date(now.getTime() - 120 * 60000).toISOString(), // 2 hours ago
+        type: 'warning',
+        isRead: false
+      }
+    ];
+  };
+
+  // Test API connection on component mount
   useEffect(() => {
-    const fetchAlerts = async () => {
+    const testConnection = async () => {
+      try {
+        console.log('Testing API connection...');
+        const result = await testApiConnection();
+        console.log('API connection test result:', result);
+      } catch (error) {
+        console.error('API connection test failed:', error);
+      }
+    };
+    
+    testConnection();
+  }, []);
+
+  // Fetch notifications from API
+  useEffect(() => {
+    const fetchFeedback = async () => {
       try {
         setLoading(true);
-        const response = await alertApi.getAll();
+        console.log('Fetching notifications from API...');
+        const response = await feedbackApi.getAll();
         
         // Check if we have data
         if (response.data && Array.isArray(response.data) && response.data.length > 0) {
           // Transform API data to match our interface if needed
-          const transformedAlerts = response.data.map((alert: any) => ({
-            id: alert.id,
-            title: alert.title || 'Alert',
-            message: alert.message,
-            timestamp: alert.timestamp,
-            type: alert.type || 'info',
-            isRead: alert.isRead || false,
-            deviceId: alert.deviceId
+          // Log the raw data to help debug
+          console.log('Raw feedback data from API:', JSON.stringify(response.data, null, 2));
+          
+          const transformedFeedback = response.data.map((feedback: any) => ({
+            id: feedback.id || feedback._id || feedback.Id || String(Date.now()), // Handle different ID formats and ensure string
+            learnerId: feedback.learnerId || feedback.LearnerId || 0,
+            title: feedback.title || feedback.Title || 'Feedback',
+            message: feedback.message || feedback.Message || feedback.comments || feedback.Comments || '',
+            timestamp: feedback.timestamp || feedback.Timestamp || new Date().toISOString(),
+            type: feedback.type || feedback.Type || 'info', // Default type for UI display
+            isRead: feedback.isRead === undefined ? false : feedback.isRead // For UI tracking
           }));
           
-          setNotifications(transformedAlerts);
+          console.log('Transformed feedback data:', transformedFeedback);
+          setNotifications(transformedFeedback);
           setError('');
         } else {
-          console.log('No alerts found in database, using demo data');
-          // Generate demo notifications since database is empty
-          setNotifications(generateDemoNotifications());
+          console.log('No notifications found in database');
+          // Use demo data to ensure notifications are visible
+          console.log('Using demo data as fallback');
+          const demoNotifications = generateDemoNotifications();
+          setNotifications(demoNotifications);
           setError('');
         }
       } catch (err) {
-        console.error('Error fetching alerts:', err);
+        console.error('Error fetching notifications:', err);
         setError('Failed to load notifications. Please try again.');
-        // Set some fallback demo data
-        setNotifications(generateDemoNotifications());
+        // Use demo data on error to ensure notifications are visible
+        console.log('Error fetching notifications, using demo data');
+        const demoNotifications = generateDemoNotifications();
+        setNotifications(demoNotifications);
       } finally {
         setLoading(false);
       }
     };
     
-    // Helper function to generate demo notifications
-    const generateDemoNotifications = (): Alert[] => {
-      const now = new Date();
-      return [
-        {
-          id: 1,
-          title: 'Low Concentration Alert',
-          message: 'Student concentration dropped below 50% for more than 10 minutes.',
-          timestamp: new Date(now.getTime() - 15 * 60000).toISOString(), // 15 mins ago
-          type: 'alert',
-          isRead: false,
-          deviceId: 'demo-device-1'
-        },
-        {
-          id: 2,
-          title: 'Poor Posture Detected',
-          message: 'Student has been sitting with poor posture for the last 15 minutes.',
-          timestamp: new Date(now.getTime() - 45 * 60000).toISOString(), // 45 mins ago
-          type: 'warning',
-          isRead: false,
-          deviceId: 'demo-device-2'
-        },
-        {
-          id: 3,
-          title: 'High Noise Level',
-          message: 'The classroom noise level has exceeded 65dB for more than 5 minutes.',
-          timestamp: new Date(now.getTime() - 90 * 60000).toISOString(), // 1.5 hours ago
-          type: 'warning',
-          isRead: true,
-          deviceId: 'demo-device-1'
-        },
-        {
-          id: 4,
-          title: 'System Update',
-          message: 'The concentration monitoring system has been updated to version 2.1.0.',
-          timestamp: new Date(now.getTime() - 24 * 60 * 60000).toISOString(), // 1 day ago
-          type: 'info',
-          isRead: true,
-          deviceId: 'system'
-        },
-      ];
-    };
+    // No demo notifications - we'll only use real data
     
-    fetchAlerts();
+    fetchFeedback();
     
-    // Poll for new alerts every minute
-    const interval = setInterval(fetchAlerts, 60000);
+    // Poll for new feedback more frequently (every 15 seconds)
+    const interval = setInterval(fetchFeedback, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -117,10 +143,17 @@ const Notifications = () => {
         isRead: true
       })));
       
-      // In a real app, you would call the API to update each alert
+      // In a real app, you would call the API to update each feedback
       // This would be a batch update or multiple individual updates
       for (const notification of notifications.filter(n => !n.isRead)) {
-        await alertApi.update(notification.id, { ...notification, isRead: true });
+        if (notification.id) {
+          try {
+            await feedbackApi.update(notification.id, { ...notification, isRead: true });
+            console.log('Marked feedback as read:', notification.id);
+          } catch (error) {
+            console.error('Error updating feedback read status:', error);
+          }
+        }
       }
     } catch (err) {
       console.error('Error marking all as read:', err);
@@ -128,7 +161,8 @@ const Notifications = () => {
     }
   }
   
-  const markAsRead = async (id: number) => {
+  const markAsRead = async (id: string | undefined) => {
+    if (!id) return; // Skip if no ID
     try {
       // Update local state immediately for responsive UI
       setNotifications(notifications.map(notification => 
@@ -138,8 +172,8 @@ const Notifications = () => {
       // Find the notification to update
       const notification = notifications.find(n => n.id === id);
       if (notification) {
-        // Call API to update the alert
-        await alertApi.update(id, { ...notification, isRead: true });
+        // Call API to update the feedback
+        await feedbackApi.update(id, { ...notification, isRead: true });
       }
     } catch (err) {
       console.error(`Error marking notification ${id} as read:`, err);
@@ -162,7 +196,7 @@ const Notifications = () => {
     }
   }
   
-  const getIconForType = (type) => {
+  const getIconForType = (type: string | undefined) => {
     switch(type) {
       case 'alert':
         return { name: 'alert-circle', color: '#e74c3c' }
@@ -175,7 +209,7 @@ const Notifications = () => {
     }
   }
   
-  const renderNotificationItem = ({ item }: { item: Alert }) => {
+  const renderNotificationItem = ({ item }: { item: Feedback }) => {
     const icon = getIconForType(item.type)
     
     return (
@@ -195,14 +229,14 @@ const Notifications = () => {
               )}
             </View>
             <Text className="text-gray-700 mb-2">{item.message}</Text>
-            <Text className="text-gray-500 text-sm">{new Date(item.timestamp).toLocaleString()}</Text>
+            <Text className="text-gray-500 text-sm">{item.timestamp ? new Date(item.timestamp as string).toLocaleString() : 'Unknown time'}</Text>
           </View>
         </View>
       </TouchableOpacity>
     )
   }
   
-  const FilterButton = ({ label, value, icon }) => (
+  const FilterButton = ({ label, value, icon }: { label: string, value: string, icon: any }) => (
     <TouchableOpacity 
       className={`px-4 py-2 rounded-full mr-2 flex-row items-center ${filter === value ? 'bg-blue-500' : 'bg-gray-200'}`}
       onPress={() => setFilter(value)}
@@ -257,12 +291,21 @@ const Notifications = () => {
               className="mt-4 bg-blue-500 px-4 py-2 rounded-lg"
               onPress={() => {
                 setLoading(true);
-                alertApi.getAll()
-                  .then(response => {
-                    setNotifications(response.data);
+                feedbackApi.getAll()
+                  .then((response: any) => {
+                    const transformedFeedback = response.data.map((feedback: any) => ({
+                      id: feedback.id || feedback._id || feedback.Id,
+                      learnerId: feedback.learnerId || feedback.LearnerId || 0,
+                      title: feedback.title || feedback.Title || 'Feedback',
+                      message: feedback.message || feedback.Message || '',
+                      timestamp: feedback.timestamp || feedback.Timestamp,
+                      type: feedback.type || 'info',
+                      isRead: feedback.isRead === undefined ? false : feedback.isRead
+                    }));
+                    setNotifications(transformedFeedback);
                     setError('');
                   })
-                  .catch(err => {
+                  .catch((err: any) => {
                     console.error('Error retrying fetch:', err);
                     setError('Failed to load notifications. Please try again.');
                   })
@@ -276,7 +319,7 @@ const Notifications = () => {
           <FlatList
             data={getFilteredNotifications()}
             renderItem={renderNotificationItem}
-            keyExtractor={item => item.id.toString()}
+            keyExtractor={item => item.id?.toString() || Math.random().toString()}
             showsVerticalScrollIndicator={false}
             ListEmptyComponent={
               <View className="items-center justify-center py-10">

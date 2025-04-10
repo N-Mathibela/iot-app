@@ -16,7 +16,7 @@ const StatCard = (props) => {
     return (
         <View className={`h-40 w-44 border-2 ${highlight ? 'border-blue-500' : 'border-gray-400'} rounded-lg m-1 p-4 relative transition-colors duration-500`}>
             <Text className="text-base font-bold text-primary">{props.title}</Text>
-            <Text className="text-5xl font-semibold text-primary my-8">{props.data}</Text>
+            <Text className="text-3xl font-semibold text-primary my-8">{props.data}</Text>
             
             {/* Updating indicator */}
             {props.isUpdating && (

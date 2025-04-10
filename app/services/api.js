@@ -1,23 +1,28 @@
 import { Platform } from 'react-native';
 
-// The API is using HTTPS, so we need to configure our URLs accordingly
+// Configure the API URL based on the platform and environment
 let API_BASE_URL;
 
-if (Platform.OS === 'android') {
-  // For Android emulator, use 10.0.2.2 which routes to the host's localhost
-  API_BASE_URL = 'https://iotwebapp-7sf7.onrender.com/api/';
-} else {
-  // For iOS simulator, localhost works
-  API_BASE_URL = 'https://iotwebapp-7sf7.onrender.com/api/';
-}
+// Use the hosted API URL for production
+// IMPORTANT: The correct URL format is exactly as specified by the user
+API_BASE_URL = 'https://iotwebapp-7sf7.onrender.com/api';
+
+// For local development, uncomment these lines and use your local API
+// if (Platform.OS === 'android') {
+//   // For Android emulator, use 10.0.2.2 which routes to the host's localhost
+//   API_BASE_URL = 'http://10.0.2.2:7013/api/';
+// } else {
+//   // For iOS simulator, localhost works
+//   API_BASE_URL = 'http://localhost:7013/api/';
+// }
 
 // Configuration for API and mock data
 const API_CONFIG = {
   // Use mock data as fallback when API is unavailable
-  useMockDataFallback: true,
+  useMockDataFallback: true, // Set to true to ensure we have fallback when API is unavailable
   
   // Always use mock data even if API is available (for testing)
-  alwaysUseMockData: false,
+  alwaysUseMockData: false, // Set to false to use real backend data
   
   // Timeout for API requests in milliseconds
   timeout: 10000,
@@ -120,7 +125,11 @@ console.log(`Using API URL: ${API_BASE_URL}`);
 
 // Create a custom fetch wrapper with default options
 const apiFetch = async (endpoint, options = {}) => {
-  const url = `${API_BASE_URL}${endpoint}`;
+  // Add a forward slash between base URL and endpoint if needed
+  // Ensure the base URL doesn't end with a slash and the endpoint doesn't start with one
+  const cleanBaseUrl = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+  const url = `${cleanBaseUrl}/${cleanEndpoint}`;
   console.log(`Fetching: ${url}`);
   
   // Default options for fetch
@@ -129,8 +138,12 @@ const apiFetch = async (endpoint, options = {}) => {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     },
-    // For local development, don't follow redirects
-    redirect: 'manual',
+    // Allow redirects for production API
+    redirect: 'follow',
+    // Add mode for CORS support
+    mode: 'cors',
+    // Add credentials for cookies if needed
+    credentials: 'same-origin',
   };
   
   // Add timeout to prevent long-hanging requests
